@@ -7,6 +7,9 @@ from tkinter import filedialog, ttk
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import mimetypes
+import time
+from requests import Request, session, sessions
+from requests.api import request
 
 # Function to sanitize a string to make it a valid filename
 def sanitize_filename(name):
@@ -19,38 +22,44 @@ def get_direct_url(url):
     return url
 
 #Function to Download Image
-def download_image(url, name, save_dir, error_log):
-    try:
-        url = get_direct_url(url)  # Convert Dropbox URLs if needed
-        response = requests.get(url, stream=True, timeout=10, allow_redirects=True)
-        response.raise_for_status()
+def download_and_rename_image(url, name, save_dir, error_log, retries=3):
+    for attempt in range(retries):
+        try:
+            url = get_direct_url(url)  # Convert Dropbox URLs if needed
+            response = requests.get(url, stream=True, timeout=20, allow_redirects=True)
+            response.raise_for_status()
 
-        # Extract content type to determine the file extension
-        content_type = response.headers.get("Content-Type", "")
-        file_extension = mimetypes.guess_extension(content_type.split(";")[0]) or ".jpg"
+            # Extract content type to determine the file extension
+            content_type = response.headers.get("Content-Type", "")
+            file_extension = mimetypes.guess_extension(content_type.split(";")[0]) or ".jpg"
 
-        # Ensure the file extension is valid
-        if file_extension not in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
-            file_extension = ".jpg"  # Default to JPG if unknown
+            # Ensure the file extension is valid
+            if file_extension not in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
+                file_extension = ".jpg"  # Default to JPG if unknown
 
-        # Use the filename from the URL if available
-        """filename = os.path.basename(url.split("?")[0])  # Remove query params
-        if "." not in filename:  # If no valid extension, use the sanitized name
-            filename = f"{sanitize_filename(name)}{file_extension}"""
-        filename = f"{sanitize_filename(name)}{file_extension}"
-        file_path = os.path.join(save_dir, filename)
+            # Use the filename from the URL if available
+            """filename = os.path.basename(url.split("?")[0])  # Remove query params
+            if "." not in filename:  # If no valid extension, use the sanitized name
+                filename = f"{sanitize_filename(name)}{file_extension}"""
+            filename = f"{sanitize_filename(name)}{file_extension}"
+            file_path = os.path.join(save_dir, filename)
 
         #file_path = os.path.join(save_dir, filename)
 
-        # Save image directly to file
-        with open(file_path, "wb") as file:
-            for chunk in response.iter_content(1024):
-                file.write(chunk)
+            # Save image directly to file
+            with open(file_path, "wb") as file:
+                for chunk in response.iter_content(1024):
+                    file.write(chunk)
 
-        log_info(f"Downloaded: {filename}")
-    except Exception as e:
-        error_log.append({"SKU": filename, "URL": url, "Error": str(e)})
-        log_info(f"Error downloading: {filename} URL: {url}: {e}")
+            log_info(f"Downloaded: {filename}")
+            break
+        except Exception as e:
+            print(f"Attempt {attempt+1} failed: {e}")
+            if attempt < retries - 1:
+                time.sleep(5)  # Wait 5 seconds before retrying
+            else:
+                error_log.append({"SKU": filename, "URL": url, "Error": str(e)})
+                log_info(f"Error downloading: {filename} URL: {url}: {e}")
 
 # Function to log messages safely
 def log_info(message):
@@ -81,7 +90,7 @@ def start_download():
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
             for _, row in df.iterrows():
-                futures.append(executor.submit(download_image, row["ImageURL"], row["ImageName"], save_dir, error_log))
+                futures.append(executor.submit(download_and_rename_image, row["ImageURL"], row["ImageName"], save_dir, error_log))
             for _ in futures:
                 progress_bar.step(1)
                 root.update_idletasks()
